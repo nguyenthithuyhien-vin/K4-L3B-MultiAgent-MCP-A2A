@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .agents import run_conflict_and_classify, run_entity_agent, run_specialists, run_verifier
+from .context import CaseContext
 from .mcp_gateway import EvidenceGateway
 from .trace import TraceWriter
 
@@ -9,10 +11,18 @@ from .trace import TraceWriter
 async def solve_case(
     case: dict[str, Any], gateway: EvidenceGateway, trace: TraceWriter
 ) -> dict[str, Any]:
-    """Implement the L3B coordinator and specialist-agent workflow here.
+    """L3B coordinator + specialist workflow with MCP evidence and observable trace."""
+    tools = set(await gateway.list_tools())
+    ctx = CaseContext(case=case, gateway=gateway, trace=trace, available_tools=tools)
 
-    Include entity resolution, conflict handling and evidence-efficient investigation.
-    The starter kit intentionally does not generate invented fallback answers.
-    """
-    del case, gateway, trace
-    raise NotImplementedError("Implement the L3B multi-agent workflow in solve_case()")
+    entity = await run_entity_agent(ctx)
+    ctx.emit("handoff", "coordinator", target="order-agent", decision_code="investigate")
+
+    order_id = None
+    resolved = entity["entity_resolution"]["resolved_order_ids"]
+    if resolved:
+        order_id = resolved[0]
+
+    specialist = await run_specialists(ctx, order_id)
+    decision = run_conflict_and_classify(ctx, entity, specialist)
+    return run_verifier(ctx, entity, decision)
